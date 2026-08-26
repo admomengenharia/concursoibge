@@ -5,6 +5,7 @@ var activeTab = "painel";
 var LS_CURRENT = "ibge_jorn_current_sim";
 var LS_HISTORY = "ibge_jorn_history";
 var SIM_SIZE = 60;
+var CLOUD_URL = "https://script.google.com/macros/s/AKfycbwlWiol4GPVIrI5hukW7XVtderKG_2ubOlTZR7jfdhZJdCVrs1aRB0s4s-1GKNU7EVJGQ/exec";
 
 function esc(s){
   var d = document.createElement("div");
@@ -43,7 +44,33 @@ function clearCurrentSim(){
   try{ localStorage.removeItem(LS_CURRENT); }catch(e){}
 }
 
-/* ---------------- load bank from xlsx ---------------- */
+/* ---------------- cloud sync (Google Sheets via Apps Script) ---------------- */
+
+function fetchCloudHistory(){
+  if (!CLOUD_URL) return Promise.resolve(null);
+  return fetch(CLOUD_URL)
+    .then(function(res){
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then(function(data){
+      return Array.isArray(data) ? data : null;
+    })
+    .catch(function(err){
+      console.error("Falha ao buscar historico na nuvem:", err);
+      return null;
+    });
+}
+
+function pushCloudHistory(entry){
+  if (!CLOUD_URL) return Promise.resolve();
+  return fetch(CLOUD_URL, {
+    method: "POST",
+    body: JSON.stringify(entry)
+  }).catch(function(err){
+    console.error("Falha ao enviar resultado para a nuvem:", err);
+  });
+}
 
 function loadBank(){
   fetch("data/questoes.xlsx")
@@ -92,8 +119,8 @@ function loadBank(){
 function renderHeaderStats(){
   var censo = BANK.filter(function(q){ return q.bloco === "Censo"; }).length;
   var jorn = BANK.filter(function(q){ return q.bloco === "Jornalismo"; }).length;
-  var el = document.getElementById("header-stats");
-  el.innerHTML =
+  var el2 = document.getElementById("header-stats");
+  el2.innerHTML =
     statBlock(BANK.length, "questões no banco") +
     statBlock(censo, "censo agro") +
     statBlock(jorn, "jornalismo");
@@ -101,8 +128,6 @@ function renderHeaderStats(){
 function statBlock(num, label){
   return '<div class="stat"><div class="num">' + num + '</div><div class="lbl">' + esc(label) + '</div></div>';
 }
-
-/* ---------------- tabs ---------------- */
 
 function renderTab(tab){
   activeTab = tab;
@@ -114,8 +139,6 @@ function renderTab(tab){
   if (tab === "biblioteca") return renderBiblioteca();
   if (tab === "desempenho") return renderDesempenho();
 }
-
-/* ---------------- painel ---------------- */
 
 function renderPainel(){
   var root = document.getElementById("view-root");
@@ -159,8 +182,6 @@ function metricCard(label, value, tone){
   return '<div class="metric-card"><div class="mlabel">' + esc(label) + '</div>' +
     '<div class="mvalue ' + tone + '">' + value + "</div></div>";
 }
-
-/* ---------------- simulado ---------------- */
 
 function startNewSimulado(){
   var pool = shuffle(BANK);
@@ -272,11 +293,13 @@ function finalizarSimulado(sim){
   sim.perTema = perTema;
   saveCurrentSim(sim);
 
+  var entry = { date: sim.finishedAt, score: score, total: sim.questions.length, perTema: perTema };
+
   var history = loadHistory();
-  history.unshift({
-    date: sim.finishedAt, score: score, total: sim.questions.length, perTema: perTema
-  });
+  history.unshift(entry);
   saveHistory(history.slice(0, 50));
+
+  pushCloudHistory(entry);
 
   renderSimuladoResult(sim);
 }
@@ -338,8 +361,6 @@ function renderSimuladoResult(sim){
   });
 }
 
-/* ---------------- biblioteca ---------------- */
-
 var biblioFilter = "todos";
 
 function renderBiblioteca(){
@@ -383,11 +404,27 @@ function pillBtn(filter, label){
   return '<button class="pill' + active + '" data-filter="' + filter + '">' + esc(label) + "</button>";
 }
 
-/* ---------------- desempenho ---------------- */
-
 function renderDesempenho(){
   var root = document.getElementById("view-root");
-  var history = loadHistory();
+  root.innerHTML = '<div class="loading">Carregando histórico da nuvem…</div>';
+
+  fetchCloudHistory().then(function(cloudHistory){
+    var history;
+    var fromCloud;
+    if (cloudHistory !== null){
+      history = cloudHistory;
+      fromCloud = true;
+      saveHistory(history.slice(0, 50));
+    } else {
+      history = loadHistory();
+      fromCloud = false;
+    }
+    renderDesempenhoContent(history, fromCloud);
+  });
+}
+
+function renderDesempenhoContent(history, fromCloud){
+  var root = document.getElementById("view-root");
 
   if (history.length === 0){
     root.innerHTML = '<div class="panel empty-state"><h2>Ainda sem simulados finalizados</h2>' +
@@ -424,6 +461,10 @@ function renderDesempenho(){
       '<span class="hscore ' + cls + '">' + h.score + "/" + h.total + " (" + pct + "%)</span></div>";
   }).join("");
 
+  var syncTag = fromCloud
+    ? '<span style="font-family:var(--font-mono);font-size:10.5px;color:var(--ok);">sincronizado com a nuvem ✓</span>'
+    : '<span style="font-family:var(--font-mono);font-size:10.5px;color:var(--warn);">exibindo histórico salvo neste navegador (não foi possível conectar à nuvem agora)</span>';
+
   root.innerHTML =
     '<div class="panel">' +
       "<h2>Temas para reforçar</h2>" +
@@ -431,12 +472,12 @@ function renderDesempenho(){
       aggHtml +
     "</div>" +
     '<div class="panel">' +
-      "<h2>Histórico de simulados</h2>" +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+        "<h2>Histórico de simulados</h2>" + syncTag +
+      "</div>" +
       histHtml +
     "</div>";
 }
-
-/* ---------------- init ---------------- */
 
 document.querySelectorAll(".tab-btn").forEach(function(btn){
   btn.addEventListener("click", function(){ renderTab(btn.dataset.tab); });
