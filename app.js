@@ -7,6 +7,22 @@ var LS_HISTORY = "ibge_jorn_history";
 var SIM_SIZE = 60;
 var CLOUD_URL = "https://script.google.com/macros/s/AKfycbwlWiol4GPVIrI5hukW7XVtderKG_2ubOlTZR7jfdhZJdCVrs1aRB0s4s-1GKNU7EVJGQ/exec";
 
+// Composicao oficial da prova, conforme Tabela 10.2 do edital (Analista Censitario - Jornalismo)
+var EXAM_COMPOSITION = [
+  { bloco: "Portugues", label: "Lingua Portuguesa", count: 15 },
+  { bloco: "RLQ", label: "Raciocinio Logico Quantitativo", count: 10 },
+  { bloco: "Jornalismo", label: "Conhecimentos Especificos", count: 35 }
+];
+var EXTRA_CENSO_SIZE = 30;
+
+var BLOCO_LABELS = {
+  "Portugues": "Lingua Portuguesa",
+  "RLQ": "Raciocinio Logico Quantitativo",
+  "Jornalismo": "Conhecimentos Especificos (Jornalismo)",
+  "Censo": "Censo Agropecuario (extra)"
+};
+function blocoLabel(b){ return BLOCO_LABELS[b] || b; }
+
 function esc(s){
   var d = document.createElement("div");
   d.textContent = s == null ? "" : String(s);
@@ -64,6 +80,8 @@ function fetchCloudHistory(){
 
 function pushCloudHistory(entry){
   if (!CLOUD_URL) return Promise.resolve();
+  // Sem cabecalho Content-Type explicito: o fetch usa text/plain por padrao,
+  // o que evita a checagem CORS "preflight" que o Apps Script nao responde.
   return fetch(CLOUD_URL, {
     method: "POST",
     body: JSON.stringify(entry)
@@ -71,6 +89,8 @@ function pushCloudHistory(entry){
     console.error("Falha ao enviar resultado para a nuvem:", err);
   });
 }
+
+/* ---------------- load bank from xlsx ---------------- */
 
 function loadBank(){
   fetch("data/questoes.xlsx")
@@ -117,17 +137,16 @@ function loadBank(){
 }
 
 function renderHeaderStats(){
-  var censo = BANK.filter(function(q){ return q.bloco === "Censo"; }).length;
-  var jorn = BANK.filter(function(q){ return q.bloco === "Jornalismo"; }).length;
-  var el2 = document.getElementById("header-stats");
-  el2.innerHTML =
+  var el = document.getElementById("header-stats");
+  el.innerHTML =
     statBlock(BANK.length, "questões no banco") +
-    statBlock(censo, "censo agro") +
-    statBlock(jorn, "jornalismo");
+    statBlock(SIM_SIZE, "questões na prova oficial");
 }
 function statBlock(num, label){
   return '<div class="stat"><div class="num">' + num + '</div><div class="lbl">' + esc(label) + '</div></div>';
 }
+
+/* ---------------- tabs ---------------- */
 
 function renderTab(tab){
   activeTab = tab;
@@ -140,6 +159,8 @@ function renderTab(tab){
   if (tab === "desempenho") return renderDesempenho();
 }
 
+/* ---------------- painel ---------------- */
+
 function renderPainel(){
   var root = document.getElementById("view-root");
   var byTema = {};
@@ -149,32 +170,53 @@ function renderPainel(){
   });
   var rowsHtml = Object.keys(byTema).map(function(t){
     var info = byTema[t];
-    return "<tr><td>" + esc(info.bloco) + "</td><td>" + esc(t) + "</td><td>" + esc(info.subtema) +
+    return "<tr><td>" + esc(blocoLabel(info.bloco)) + "</td><td>" + esc(t) + "</td><td>" + esc(info.subtema) +
       '</td><td class="count">' + info.count + "</td></tr>";
   }).join("");
 
+  var examRowsHtml = EXAM_COMPOSITION.map(function(comp){
+    var disponivel = BANK.filter(function(q){ return q.bloco === comp.bloco; }).length;
+    return "<tr><td>" + esc(comp.label) + "</td><td>" + comp.count + "</td><td>" + comp.count + ",00</td><td>" +
+      disponivel + " no banco</td></tr>";
+  }).join("");
+
+  var censoCount = BANK.filter(function(q){ return q.bloco === "Censo"; }).length;
+
   root.innerHTML =
     '<div class="panel">' +
-      "<h2>Gerar novo simulado</h2>" +
-      '<div class="desc">Sorteia ' + SIM_SIZE + ' questões do banco (Censo Agropecuário + Conhecimentos Específicos de Jornalismo), no formato objetivo A a E, igual ao modelo de prova.</div>' +
+      "<h2>Formato oficial da prova (Tabela 10.2 do edital)</h2>" +
+      '<div class="desc">Analista Censitário (AC), todas as áreas — prova objetiva única, 5 alternativas por questão, caráter eliminatório e classificatório.</div>' +
+      '<table class="tema-table"><thead><tr><th>Disciplina</th><th>Nº questões</th><th>Valor total</th><th>Banco disponível</th></tr></thead>' +
+      "<tbody>" + examRowsHtml +
+      '<tr><td><strong>Total</strong></td><td><strong>' + SIM_SIZE + '</strong></td><td><strong>' + SIM_SIZE + ',00</strong></td><td>—</td></tr>' +
+      "</tbody></table>" +
+      '<div class="btn-row">' +
+        '<button class="btn primary" id="btn-gerar-simulado">Gerar simulado oficial (' + SIM_SIZE + " questões)</button>" +
+      "</div>" +
+    "</div>" +
+    '<div class="panel">' +
+      "<h2>Extra: Censo Agropecuário</h2>" +
+      '<div class="desc">Conteúdo da apostila de capacitação do Censo Agropecuário — material de apoio, provavelmente ligado ao processo seletivo de pessoal temporário (recenseador etc.), fora do formato oficial de 60 questões do Analista Censitário. Use como estudo complementar.</div>' +
       '<div class="grid-cards">' +
-        metricCard("total de questões", BANK.length, "amber") +
-        metricCard("temas cobertos", TEMAS.length, "blue") +
-        metricCard("tamanho do simulado", SIM_SIZE, "rust") +
+        metricCard("questões de Censo disponíveis", censoCount, "rust") +
       "</div>" +
       '<div class="btn-row">' +
-        '<button class="btn primary" id="btn-gerar-simulado">Gerar simulado de ' + SIM_SIZE + " questões</button>" +
+        '<button class="btn ghost" id="btn-gerar-censo">Gerar simulado extra de ' + EXTRA_CENSO_SIZE + " questões (Censo)</button>" +
       "</div>" +
     "</div>" +
     '<div class="panel">' +
       "<h2>Cobertura por tema</h2>" +
       '<div class="desc">Cada linha corresponde a um tema do edital, com o número de questões disponíveis no banco.</div>' +
-      '<table class="tema-table"><thead><tr><th>Bloco</th><th>Tema</th><th>Referência no edital</th><th>Qtd.</th></tr></thead>' +
+      '<table class="tema-table"><thead><tr><th>Bloco</th><th>Tema</th><th>Referência</th><th>Qtd.</th></tr></thead>' +
       "<tbody>" + rowsHtml + "</tbody></table>" +
     "</div>";
 
   document.getElementById("btn-gerar-simulado").addEventListener("click", function(){
-    startNewSimulado();
+    startNewSimulado("oficial");
+    renderTab("simulado");
+  });
+  document.getElementById("btn-gerar-censo").addEventListener("click", function(){
+    startNewSimulado("censo");
     renderTab("simulado");
   });
 }
@@ -183,10 +225,24 @@ function metricCard(label, value, tone){
     '<div class="mvalue ' + tone + '">' + value + "</div></div>";
 }
 
-function startNewSimulado(){
-  var pool = shuffle(BANK);
-  var chosen = pool.slice(0, Math.min(SIM_SIZE, pool.length));
+/* ---------------- simulado ---------------- */
+
+function startNewSimulado(kind){
+  kind = kind || "oficial";
+  var chosen = [];
+
+  if (kind === "oficial"){
+    EXAM_COMPOSITION.forEach(function(comp){
+      var pool = shuffle(BANK.filter(function(q){ return q.bloco === comp.bloco; }));
+      chosen = chosen.concat(pool.slice(0, Math.min(comp.count, pool.length)));
+    });
+  } else if (kind === "censo"){
+    var poolCenso = shuffle(BANK.filter(function(q){ return q.bloco === "Censo"; }));
+    chosen = poolCenso.slice(0, Math.min(EXTRA_CENSO_SIZE, poolCenso.length));
+  }
+
   var sim = {
+    kind: kind,
     startedAt: new Date().toISOString(),
     finished: false,
     questions: chosen.map(function(q){
@@ -233,14 +289,19 @@ function renderSimulado(){
         "<span>" + String.fromCharCode(65 + oi) + ") " + esc(opt) + "</span></label>";
     }).join("");
     return '<div class="question-card">' +
-      '<div class="qmeta">' + esc(q.bloco) + " · " + esc(q.tema) + " · " + esc(q.subtema) + "</div>" +
+      '<div class="qmeta">' + esc(blocoLabel(q.bloco)) + " · " + esc(q.tema) + " · " + esc(q.subtema) + "</div>" +
       '<div class="qtext">' + (qi + 1) + ") " + esc(q.pergunta) + "</div>" +
       optsHtml +
       "</div>";
   }).join("");
 
+  var simKindTag = sim.kind === "censo"
+    ? '<span class="eyebrow-tag">Simulado extra · Censo Agropecuário (fora do formato oficial)</span>'
+    : '<span class="eyebrow-tag">Simulado oficial · 15 Português + 10 RLQ + 35 Conhecimentos Específicos</span>';
+
   root.innerHTML =
     '<div class="panel">' +
+      simKindTag +
       '<div class="sim-progress"><span>' + answered + " / " + sim.questions.length + " respondidas</span>" +
       '<div class="sim-bar"><div style="width:' + pct + '%"></div></div><span>' + pct + "%</span></div>" +
       '<div class="btn-row">' +
@@ -272,8 +333,9 @@ function renderSimulado(){
   });
   document.getElementById("btn-descartar").addEventListener("click", function(){
     if (confirm("Descartar o simulado atual e comecar um novo?")){
+      var kindAtual = sim.kind || "oficial";
       clearCurrentSim();
-      startNewSimulado();
+      startNewSimulado(kindAtual);
       renderSimulado();
     }
   });
@@ -293,13 +355,16 @@ function finalizarSimulado(sim){
   sim.perTema = perTema;
   saveCurrentSim(sim);
 
-  var entry = { date: sim.finishedAt, score: score, total: sim.questions.length, perTema: perTema };
-
-  var history = loadHistory();
-  history.unshift(entry);
-  saveHistory(history.slice(0, 50));
-
-  pushCloudHistory(entry);
+  // Apenas o simulado no formato oficial (60 questoes: Portugues+RLQ+Especificos)
+  // entra no historico e na sincronizacao com a nuvem. O simulado extra de Censo
+  // e apenas para estudo pontual, fora do formato da prova.
+  if (sim.kind === "oficial"){
+    var entry = { date: sim.finishedAt, score: score, total: sim.questions.length, perTema: perTema };
+    var history = loadHistory();
+    history.unshift(entry);
+    saveHistory(history.slice(0, 50));
+    pushCloudHistory(entry);
+  }
 
   renderSimuladoResult(sim);
 }
@@ -332,15 +397,20 @@ function renderSimuladoResult(sim){
         "<span>" + String.fromCharCode(65 + oi) + ") " + esc(opt) + "</span></div>";
     }).join("");
     return '<div class="question-card">' +
-      '<div class="qmeta">' + esc(q.bloco) + " · " + esc(q.tema) + " · " + esc(q.subtema) + "</div>" +
+      '<div class="qmeta">' + esc(blocoLabel(q.bloco)) + " · " + esc(q.tema) + " · " + esc(q.subtema) + "</div>" +
       '<div class="qtext">' + (qi + 1) + ") " + esc(q.pergunta) + "</div>" +
       optsHtml +
       '<div class="explic show">' + esc(q.explicacao) + "</div>" +
       "</div>";
   }).join("");
 
+  var simKindTagResult = sim.kind === "censo"
+    ? '<span class="eyebrow-tag">Simulado extra · Censo Agropecuário (não sincronizado com a nuvem)</span>'
+    : '<span class="eyebrow-tag">Simulado oficial · registrado no seu histórico</span>';
+
   root.innerHTML =
     '<div class="panel">' +
+      simKindTagResult +
       '<div class="result-hero">' +
         '<div class="result-score" style="color:' + tone + '">' + sim.score +
           '<span class="of">/ ' + sim.questions.length + " (" + pct + "%)</span></div>" +
@@ -356,10 +426,12 @@ function renderSimuladoResult(sim){
     "</div>";
 
   document.getElementById("btn-novo-simulado").addEventListener("click", function(){
-    startNewSimulado();
+    startNewSimulado(sim.kind || "oficial");
     renderSimulado();
   });
 }
+
+/* ---------------- biblioteca ---------------- */
 
 var biblioFilter = "todos";
 
@@ -387,7 +459,8 @@ function renderBiblioteca(){
       "<h2>Biblioteca de estudo</h2>" +
       '<div class="desc">Resumos organizados por tema, extraídos da apostila do Censo e dos pontos do edital de Jornalismo.</div>' +
       '<div class="bloco-select">' +
-        pillBtn("todos", "Todos") + pillBtn("censo", "Censo") + pillBtn("jornalismo", "Jornalismo") +
+        pillBtn("todos", "Todos") + pillBtn("portugues", "Português") + pillBtn("rlq", "Raciocínio Lógico") +
+        pillBtn("jornalismo", "Conhecimentos Específicos") + pillBtn("censo", "Censo (extra)") +
       "</div>" +
       blocksHtml +
     "</div>";
@@ -404,6 +477,8 @@ function pillBtn(filter, label){
   return '<button class="pill' + active + '" data-filter="' + filter + '">' + esc(label) + "</button>";
 }
 
+/* ---------------- desempenho ---------------- */
+
 function renderDesempenho(){
   var root = document.getElementById("view-root");
   root.innerHTML = '<div class="loading">Carregando histórico da nuvem…</div>';
@@ -414,7 +489,7 @@ function renderDesempenho(){
     if (cloudHistory !== null){
       history = cloudHistory;
       fromCloud = true;
-      saveHistory(history.slice(0, 50));
+      saveHistory(history.slice(0, 50)); // mantem uma copia local como cache/backup
     } else {
       history = loadHistory();
       fromCloud = false;
@@ -478,6 +553,8 @@ function renderDesempenhoContent(history, fromCloud){
       histHtml +
     "</div>";
 }
+
+/* ---------------- init ---------------- */
 
 document.querySelectorAll(".tab-btn").forEach(function(btn){
   btn.addEventListener("click", function(){ renderTab(btn.dataset.tab); });

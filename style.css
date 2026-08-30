@@ -68,6 +68,11 @@ a{ color:var(--accent-blue); }
   padding:20px 24px; margin-bottom:18px;
 }
 .panel h2{ font-family:var(--font-display); font-weight:700; font-size:18px; margin:0 0 4px; }
+.eyebrow-tag{
+  display:inline-block; font-family:var(--font-mono); font-size:10.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--accent-amber); background:rgba(242,169,59,0.12);
+  padding:4px 10px; border-radius:20px; margin-bottom:12px;
+}
 .panel .desc{ color:var(--text-muted); font-size:13px; margin-bottom:16px; }
 
 .grid-cards{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:14px; }
